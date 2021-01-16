@@ -1,0 +1,85 @@
+---
+title: "SNP Index with Volume"
+author: "Stephen Bique"
+date: "1/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+```{r, results='hide', echo=FALSE}
+library(tidyr)
+library(dplyr)
+library(tidyquant)
+library(lubridate)
+library(tidyverse)
+```
+## Date Calculations
+```{r end_date,start_date,today, echo=FALSE} 
+end_date <- Sys.Date()
+today <- format(end_date, "%B %d, %Y")
+num_years_back <- 5
+start_date <- end_date %m+% months(num_years_back*(-12))
+```
+
+## Data Processing
+
+Downloading S & P 500 price
+
+```{r index, echo=FALSE, results='hide'}
+index <- as.data.frame(tq_get("^GSPC", from=start_date, to=end_date, get = "stock.prices")) 
+index <- index[c("date","volume","adjusted")] 
+index <- index %>% rename(close=adjusted)
+```
+
+
+## `r today`
+```{r, echo=TRUE, eval=FALSE}
+library(plotly)
+
+plot_ly(index) %>%
+              add_trace(x =~date, y=~volume, type='bar', name = 'Volume',
+                        marker = list(color = '#90EE90'),
+                        hoverinfo = "text",
+                        text = ~paste(volume), '') %>%
+              add_trace(x = ~date, y = ~close, type="scatter", mode = "lines", 
+                        name = 'Index', yaxis = 'y2',
+                        line = list(color = ' #013220'),
+                        hoverinfo = "text",
+                        text = ~paste('$',close)) %>% 
+             layout(title = "S & P 500",
+                    xaxis = list(title = "Date"),
+                    yaxis = list(side = 'right', title = 'Volume', 
+                                 showgrid = FALSE, zeroline = FALSE),
+                    yaxis2 = list(side = 'left', overlaying = "y", 
+                                  title = 'Price in USD', showgrid = TRUE,
+                    zeroline = FALSE))
+
+```
+
+## `r today`
+
+```{r, echo=FALSE, eval=TRUE, message=FALSE}
+library(plotly)
+
+plot_ly(index) %>%
+              add_trace(x =~date, y=~volume, type='bar', name = 'Volume',
+                        marker = list(color = '#90EE90'),
+                        hoverinfo = "text",
+                        text = ~paste(volume), '') %>%
+              add_trace(x = ~date, y = ~close, type="scatter", mode = "lines", 
+                        name = 'Index', yaxis = 'y2',
+                        line = list(color = ' #013220'),
+                        hoverinfo = "text",
+                        text = ~paste('$',close)) %>% 
+             layout(title = "S & P 500",
+                    xaxis = list(title = "Date"),
+                    yaxis = list(side = 'right', title = 'Volume', 
+                                 showgrid = FALSE, zeroline = FALSE),
+                    yaxis2 = list(side = 'left', overlaying = "y", 
+                                  title = 'Price in USD', showgrid = TRUE,
+                    zeroline = FALSE))
+```
