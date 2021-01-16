@@ -1,0 +1,44 @@
+---
+title: "Fatal Shootings"
+author: "Stephen Bique"
+date: "1/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load libraries
+```{r, results='hide'}
+library(dplyr)
+library(htmltools)
+```
+
+
+```{r today} 
+today <- format(Sys.Date(), "%B %d, %Y")
+```
+
+
+```{r df, results='hide'}
+fatal <- "https://raw.githubusercontent.com/washingtonpost/data-police-shootings/master/fatal-police-shootings-data.csv"
+df <- read.csv(url(fatal))
+df <- df[sample(nrow(df), 1000), c("latitude","longitude")] 
+df <- df %>% rename(lat=latitude, lng=longitude)
+rm(fatal)
+```
+ 
+
+## `r today`
+
+```{r, echo=FALSE,warning=FALSE}
+library(leaflet)
+
+df %>%
+  leaflet() %>%
+  addTiles() %>%
+  addMarkers()
+
+```
