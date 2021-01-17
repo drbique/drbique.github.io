@@ -6,6 +6,8 @@
 #
 #    http://shiny.rstudio.com/
 #
+library(tidyr)
+library(dplyr)
 library(tidyquant)
 library(tidyverse)
 library(plotly)
@@ -20,19 +22,16 @@ shinyServer(function(input, output) {
         from_date = input$slider
         
         # Data processing
-        index <- as.data.frame(tq_get("^GSPC", from=from_date, to=end_date, 
+        index <- as.data.frame(tq_get("^GSPC", from=from_date, to=Sys.Date(), 
                                       get = "stock.prices")) 
         index <- index[c("date","volume","adjusted")] 
         index <- index %>% rename(close=adjusted)
 
-        # draw the histogram with the specified number of bins
-
-        
         plot_ly(index) %>%
             add_trace(x =~date, y=~volume, type='bar', name = 'Volume',
                       marker = list(color = '#90EE90'),
                       hoverinfo = "text",
-                      text = ~paste(volume), '') %>%
+                      text = ~paste(volume)) %>%
             add_trace(x = ~date, y = ~close, type="scatter", mode = "lines", 
                       name = 'Index', yaxis = 'y2',
                       line = list(color = ' #013220'),
