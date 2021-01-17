@@ -8,3 +8,18 @@ Please Visit the following Rpubs page to view HTML using library plotly
 as shown in the R markdown file SNP.Rmd:
     
     https://rpubs.com/drbique/snp
+    
+
+Please visit the following site to view Shiny application:
+
+    https://drbique.shinyapps.io/InteractiveSNP/
+    
+    
+Files:    
+    
+Fatal.Rmd     R markdown file using leaflet()
+SNP.Rmd       R markdown file using plotly()
+
+InteractiveSNP
+  ui.R        R markdown file with user interface 
+  server.R    R markdown file with server logic
