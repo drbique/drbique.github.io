@@ -144,6 +144,12 @@ In our algorithm described next, we use the idea that if we fail to find desired
 
 The output! In our original attempt, we focused on finding the *best* completion. This approach was sound because it was necessary to demonstrate the methodology. Suppose, however, we return a word completion and then, the user say's: "well oh yeah, that too, but no, I don't like that word , give me another completion!" So we will return a list of possible completions whenever such info is readily available. What does this mean? We do not intend to do an exhaustive search! However, upon searching for a particular **n-gram**, if we find multiple results, we then return them approximately in ranked order. The words are ranked so that the first item in the result is 'our' best guess at completion.
 
+What else is new? We do not want to return *bad* words such as misspelled words. So we would like to clean the text. Well, wait a minute, didn't we already do this task? Yes, but we were conservative because
+we did not want to remove for example new words, or even misspelled words! In fact, we can expect to find
+completions of phrases with misspellings if we allow them! This is called learning from other's mistakes!
+Now we will allow *bad* words in the patterns for the n-grams such as words that are misspelled, 
+and we only replace the *bad* completion words by possible corrections. 
+
 How can we achieve greater accuracy? Recall, we started with a rather large dataset. We partitioned that dataset as usual into three datasets for training, testing and validating. We used only the *training* dataset to obtain the various **n-grams** used in our algorithm. We now will improve the accuracy by testing  our model using the *test* dataset to discover when our algorithm fails and add new **n-grams** to avoid those failures. It is important to note that the training and test datasets do not overlap at all.
 
 How will we measure accuracy? We will use the *valid* dataset which does not overlap with either the *train* or *test* datasets. In particular, we will conduct tests for strings containing from one to three words.
@@ -957,6 +963,467 @@ train3word <- future_lapply(train3match,
 
 save(train3match,train3word,train3_length, file = "train-3.rda")
 
+
+load("train_4.rda")
+train4 <- mutate3(train_4)
+colnames(train4) <- c("prefix","word","count")
+save(train4, file = "train4.rda")
+
+train4match <- sort(unique(train4$prefix))
+
+train4_length <- length(train4match)
+
+require(fastmatch)
+options(future.globals.maxSize= 782.25*1024^2)
+train4word <- future_lapply(train4match, 
+      function(x) train4[train4$prefix %fin% x,]$word)
+
+save(train4match,train4word,train4_length, file = "train-4.rda")
+
+```
+
+Clean word lists before testing for all **n-grams**.
+```{r}
+require(future.apply)
+plan(multisession) ## Run in parallel on local computer
+options(future.globals.maxSize= 782.25*1024^2)
+
+require(hunspell)
+require(future.apply)
+require(qdap)
+replace_bad_words <- function(x) {
+  future_lapply(1:length(x),function(y) {
+    bad = hunspell(x[y])[[1]]
+    if( length(bad) ) {
+      bad <- unlist(sapply(unlist(bad), function(e) { 
+      if(!is.null(which_misspelled(e, suggest=FALSE))) e
+      }))
+      if( !is.null(bad) ) sapply(bad, function(b) {
+        x[y] <<- gsub(b,
+	          hunspell_suggest(b)[[1]][1],x[y])
+      })
+	}})
+  x
+}
+
+load(file = "train-2.rda")
+train2word <- replace_bad_words(train2word)
+save(train2match, train2word, train2_length, file = "train-2.rda")
+
+load(file = "train-3.rda")
+train3word <- replace_bad_words(train3word)
+save(train3match, train3word, train3_length, file = "train-3.rda")
+
+load(file = "train-4.rda")
+train4word <- replace_bad_words(train4word)
+save(train4match, train4word, train4_length, file = "train-4.rda")
+```
+Partition **test** and **valid** datasets into smaller datasets to reduce time for testing.
+We process the **test** dataset sequentially because the 4-grams are listed in order of frequency
+and we want to add less frequently appearing words at the ends of the stored 4-grams. In this way,
+more frequently appearing words should appear earlier in the list.The **valid** dataset consists of random non-overlappings subsets.
+```{r}
+
+
+number_tests <- 10L
+
+load("test_4grams.rda")
+Length = nrow(test)
+size_test    <- floor(Length / number_tests)
+
+first <- 0L
+last <- 0L
+
+remaining_size <- Length
+for(i in 1:number_tests ) {
+  size_test = min(size_test,remaining_size)
+  first =  last + 1L
+  last = first + size_test - 1L
+  remaining_size = remaining_size - size_test
+  ngrams <- test[first:last,]$ngrams 
+  save(ngrams, file = paste0("test4grams-",i,".rda"))
+}
+
+load("validate_4grams.rda")
+Length = nrow(valid)
+size_test    <- floor(Length / number_tests)
+
+set.seed(4871077)
+
+remaining <- seq_len(Length)
+remaining_size = Length
+for(i in 1:number_tests ) {
+  size_test = min(size_test,remaining_size)
+  indices  <- sort(sample(remaining, size=size_test))
+  remaining <- setdiff(remaining, indices)
+  remaining_size = remaining_size - size_test
+  ngrams <- valid[indices,]$ngrams 
+  save(ngrams, file = paste0("valid4grams-",i,".rda"))
+}
+
+```
+
+Testing *test* dataset. When testing, with the **test** (not the **valid**) dataset, we want to add **4-grams** upon failure, but only if last word of n-gram is a valid word. On failure during testing, we want to add the 4-gram, provided the completion 'word' is valid. Testing is slow, so we will only save the failed **n-grams** as *prefixes* and corresponding *words*. We later call a function that adds the 4-grams provided the words are valid. See below.
+ 
+```{r}
+require(stringr)	
+# How useful are 2-grams and 3-grams when testing using 3 words?
+count2 <- 0L	# need for testing one word anyway
+count3 <- 0L	
+predict <- function(p) {
+  s <- unlist(strsplit(p, ' '))
+  t <- length(s) 
+  if(t >= 3) {
+    if(t >= 4) s <- tail(s,3)
+    indx <- fmatch(paste(s[1],s[2],s[3], sep = " "),train4match)
+    if( is.na(indx) ) {
+      count3 = count3 + 1L
+      indx <- fmatch(paste(s[2],s[3], sep = " "),train3match)
+      if( is.na(indx) ) {
+        count2 = count2 + 1L   
+        indx <- fmatch(s[3],train2match)
+        if( is.na(indx) ) {
+          indx <- fmatch(paste(s[1],s[2], sep = " "),train3match)
+          if(! is.na(indx) ) {
+            t <- train3word[indx]
+          } else {
+            indx <- fmatch(s[2],train2match)
+            if(! is.na(indx) ) {
+              t <- train2word[indx]
+            } else {
+              indx <- fmatch(s[1],train2match)
+              if( is.na(indx) ) {
+                t <- NA
+              } else {
+                t <- train2word[indx]
+              }
+            } 
+          }
+        } else {
+          t <- train2word[indx] 
+        }
+      } else {
+        t <- train3word[indx]
+      }
+    } else {
+      t <- train4word[indx]
+    }
+  } else if (t == 2) {
+    indx <- fmatch(p,train3match)
+    if( is.na(indx) ) {
+      indx <- fmatch(s[2],train2match)
+      if( is.na(indx) ) {
+        indx <- fmatch(s[1],train2match)
+        if( is.na(indx) ) {
+          t <- NA
+        } else {
+          t <- train2word[indx]
+        }
+      } else {
+        t <- train2word[indx] 
+      }
+    } else {
+      t <- train3word[indx]
+    }
+  } else if (t == 1) {
+    indx <- fmatch(p,train2match)
+    if( is.na(indx) ) {
+      t <- NA
+    } else {
+      t <- train2word[indx]
+    }
+  } else {
+    t = NA
+  }  
+  t}
+
+prefixes <- c()
+words <- c()
+wrong <- 0L
+right <- 0L
+nas <- 0L
+tests <- 0L
+test_number <- 0L
+
+save(prefixes,words,count2,count3,right,wrong,nas,tests,test_number, file="add-ngrams.rda")
+```
+The total number of tests is 10. Run the following code for test_number = 1..number_tests, or as many as possible.
+```{r}
+load("add-ngrams.rda")
+test_number <- test_number + 1L
+
+if( test_number <= 10L ) {
+
+load(paste0("test4grams-",test_number,".rda"))
+  
+tests = tests + length(ngrams)
+
+for(ngram in ngrams) {
+   s <- split(unlist(strsplit(ngram, '( )(?=[^ ]+$)', perl=TRUE)),1:2)
+   t <- predict(s[1])
+   if( is.na(t) ) {
+     nas = nas + 1L
+
+     # word might be bad - will check later
+     prefixes <- c(prefixes, s[1])
+     words <- c(words, s[2])
+   } else {
+     if(s[2] %fin% unlist(strsplit(t,' '))) {
+       right = right + 1L
+     } else {
+       wrong = wrong + 1L
+       
+       # word might be bad - will check later
+       prefixes <- c(prefixes, s[1])
+       words <- c(words, s[2])
+     }
+   }
+}
+save(prefixes,words,count2,count3,right,wrong,nas,tests,test_number, file="add-ngrams.rda")
+
+}
+```
+```{r, render=lemon_print}
+load("add-ngrams.rda")
+
+print(paste0("The total number of tests is ", tests, " using ",test_number," files"))
+    
+total <- nas + wrong + right
+accuracy <-  right/total*100
+
+print(paste0("2-grams and 3-grams were used ", count2/total*100,"% and ",count3/total*100,"%, resp."))  
+
+print(paste0("The accuracy of correctly listing a completion is ",accuracy,"% in ",total," tests."))
+```
+
+
+This code implements the desired adding of **4-grams** from **test** dataset to **train** dataset.
+```{r}
+add_ngrams <- function() {
+  load(file = "add-ngrams.rda") # contains prefixes and corresponding words 
+  load(file = "train-4.rda")
+  last <- train4_length
+  count <- 0L
+  future_lapply(1:length(prefixes), function(k) {
+    w <- words[k]
+    if( hunspell_check(w) || is.null(which_misspelled(w, suggest=FALSE))) {
+      count = count + 1L
+      low = 1L
+      high = last
+      found = FALSE
+      c = stri_compare(train4match[low],w)
+      if (c < 0) {
+        is_to_right = TRUE
+        c = stri_compare(w,train4match[high])
+        if(c < 0) {
+          is_to_left = TRUE
+        } else if(c == 0) {
+          current = high
+          found = TRUE
+          is_to_right = FALSE
+        }  else { 
+          first = last
+          is_to_right = FALSE
+        }
+      } else { 
+        if (c == 0) {
+          current = low
+          found = TRUE
+          is_to_right = FALSE
+        } else {
+          first = 0L	  
+          is_to_right = FALSE
+        }
+      }
+      while ( is_to_right && is_to_left ) {
+        current = (low + high) %/% 2L
+        if(current == low) {
+          first = low
+          current = high
+          break
+        }
+        c = stri_compare(train4match[current],w)
+        if (c < 0) {
+          low = current
+        } else if (c > 0) {
+          high = current
+        } else {
+          found = TRUE
+          is_to_right = FALSE
+        }
+      }
+      if( found ) {
+        train4word[current] <- paste(train4word[current],w, sep = " ")
+      } else {
+        if( first == 0 ) {
+          train4match <- c(prefixes[k],train4match)
+          train4word <- c(w,train4word)
+        } else if ( first == last ) {
+          train4match <- c(train4match,prefixes[k])
+          train4word <- c(train4word,w)
+        } else {
+          train4match <- c( train4match[1:first], prefixes[k], train4match[current:last] )
+          train4word <- c( train4word[1:first], w, train4word[current:last] )
+        }
+        last = last + 1L
+      }
+    }	 
+  })
+  train4_length <- last
+  save(train4match,train4word,train4_length, file = "train4grams.rda")
+  count
+} 
+
+add_ngrams()
+```
+Test using 1 to 3 words.
+```{r}
+predict <- function(p) {
+  s <- unlist(strsplit(p, ' '))
+  t <- length(s) 
+  if(t >= 3) {
+    if(t >= 4) s <- tail(s,3)
+    indx <- fmatch(paste(s[1],s[2],s[3], sep = " "),train4match)
+    if( is.na(indx) ) {
+      indx <- fmatch(paste(s[2],s[3], sep = " "),train3match)
+      if( is.na(indx) ) {
+        indx <- fmatch(s[3],train2match)
+        if( is.na(indx) ) {
+          indx <- fmatch(paste(s[1],s[2], sep = " "),train3match)
+          if(! is.na(indx) ) {
+            t <- train3word[indx]
+          } else {
+            indx <- fmatch(s[2],train2match)
+            if(! is.na(indx) ) {
+              t <- train2word[indx]
+            } else {
+              indx <- fmatch(s[1],train2match)
+              if( is.na(indx) ) {
+                t <- NA
+              } else {
+                t <- train2word[indx]
+              }
+            } 
+          }
+        } else {
+          t <- train2word[indx] 
+        }
+      } else {
+        t <- train3word[indx]
+      }
+    } else {
+      t <- train4word[indx]
+    }
+  } else if (t == 2) {
+    indx <- fmatch(p,train3match)
+    if( is.na(indx) ) {
+      indx <- fmatch(s[2],train2match)
+      if( is.na(indx) ) {
+        indx <- fmatch(s[1],train2match)
+        if( is.na(indx) ) {
+          t <- NA
+        } else {
+          t <- train2word[indx]
+        }
+      } else {
+        t <- train2word[indx] 
+      }
+    } else {
+      t <- train3word[indx]
+    }
+  } else if (t == 1) {
+    indx <- fmatch(p,train2match)
+    if( is.na(indx) ) {
+      t <- NA
+    } else {
+      t <- train2word[indx]
+    }
+  } else {
+    t = NA
+  }  
+  t}
+
+
+wrong <- C(0L,0L,0L)
+right <-C(0L,0L,0L)
+nas <-  C(0L,0L,0L)
+tests <- 0L 
+test_number <- 0L
+
+save(right, wrong, nas, tests, test_number, file="stats.rda")
+```
+The total number of tests is 10. Run the following code for test_number = 1..number_tests or as many as possible
+```{r}
+load("add-ngrams.rda")
+test_number <- test_number + 1L
+
+if( test_number <= 10L ) {
+
+  load(paste0("valid4grams-",test_number,".rda"))
+  
+  tests <- tests + length(ngrams)
+  
+  for(ngram in ngrams) {
+    s <- unlist(strsplit(ngram,' '))
+    
+    # 3 word test
+    t <- predict(paste(s[1],s[2],S[3], sep = ' '))
+    if( is.na(t) ) {
+      nas[3] = nas[3] + 1L
+    } else {
+      if(s[4] %fin% unlist(strsplit(t,' '))) {
+        right[3] = right[3] + 1L
+      } else {
+        wrong[3] = wrong[3] + 1L
+      }
+    }
+
+    # 2 word test
+    t <- predict(paste(s[1],s[2], sep = ' '))
+    if( is.na(t) ) {
+      nas[2] = nas[2] + 1L
+    } else {
+      if(s[3] %fin% unlist(strsplit(t,' '))) {
+        right[2] = right[2] + 1L
+      } else {
+        wrong[2] = wrong[2] + 1L
+      }
+    }
+    
+    # 1 word test
+    t <- predict(s[1])
+    if( is.na(t) ) {
+      nas[1] = nas[1] + 1L
+    } else {
+      if(s[2] %fin% unlist(strsplit(t,' '))) {
+        right[1] = right[1] + 1L
+      } else {
+        wrong[1] = wrong[1] + 1L
+      }
+    }
+  }
+save(right,wrong,nas,tests,test_number, file="stats.rda")
+}
+
+```
+Print results.
+```{r, rendor=lemon_print}
+load("stats.rda")
+
+print(paste0("Using ",test_number," files, the total number of tests is ", tests, " per number of words."))
+      
+total <- numeric(3)
+accuracy <- numeric(3)
+for(i in 1:3) {
+  total[i] = nas[i]+wrong[i]+right[i]
+  accuracy[i] = right[i]/total[i]*100
+}
+df <- data.frame(Tests=total, Correct=right, Accuracy=accuracy, row.names = FALSE)
+head(df)
+
+print(accuracy)
+summary(accuracy)
+plot(accuracy)
 ```
 
 ## Conclusion
