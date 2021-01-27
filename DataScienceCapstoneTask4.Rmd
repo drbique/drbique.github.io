@@ -1,0 +1,966 @@
+---
+title: "EDA Milestone Report"
+author: "Stephen Bique"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+code_folding: "hide"
+references:
+- id: jurafsky2020
+  title: N-gram Language Models
+  author:
+  - family: Jurafsky
+    given: Daniel
+  - family: Martin
+    given: James H.    
+  container-title: Speech and Language Processing
+  URL: 'https://web.stanford.edu/~jurafsky/slp3/3.pdf'
+  page: 1-28
+  type: manuscript
+  issued:
+    year: 2020
+    month: 12    
+- id: ngramwiki
+  title: n-gram
+  author:
+  - family: Wikipedia contributors
+  URL: 'https://en.wikipedia.org/w/index.php?title=N-gram&oldid=998158976'
+  publisher:  Wikipedia, The Free Encyclopedia
+  type: webpage
+  issued:
+    year: 2021
+    month: 1
+- id: katzwiki
+  title: Katz's back-off model
+  author:
+  - family: Wikipedia contributors
+  URL: 'https://en.wikipedia.org/w/index.php?title=Katz%27s_back-off_model&oldid=991317475'
+  publisher: Wikipedia, The Free Encyclopedia
+  type: webpage
+  issued:
+    year: 2021
+    month: 1    
+- id: quantedarblog
+  title: Advancing Text Mining with R and quanteda
+  author:
+  - family: Puschmann 
+    given: Cornelius 
+  URL: 'https://www.mzes.uni-mannheim.de/socialsciencedatalab/article/advancing-text-mining/'
+  publisher: Methods Bites
+  type: post-weblog
+  issued:
+    year: 2019
+    month: 10    
+- id: brants2007
+  title: Large Language Models in Machine Translation
+  author:
+  - family: Brants
+    given: Thorsten 
+  - family: Popat
+    given: Ashok C.
+  - family: Xu
+    given: Peng  
+  - family: Och
+    given: Franz J.  
+  - family: Dean
+    given: Jeffrey
+  container-title: Proceedings of the 2007 Joint Conference on Empirical Methods in Natural Language Processing and ComputationalNatural Language Learning
+  URL: 'https://www.aclweb.org/anthology/D07-1090.pdf'
+  publisher: Association for Computational Linguistics
+  page: 858-867
+  type: paper-conference
+  issued:
+    year: 2007
+    month: 6
+- id: sampson2017
+  title: Good–Turing Frequency Estimation
+  author:
+  - family: Sampson
+    given: Geoffrey
+  URL: 'https://www.grsampson.net/RGoodTur.html'
+  type: webpage
+  issued:
+    year: 2017
+    month: 11
+- id: gale1995
+  title: Good–Turing frequency estimation without tears
+  author:
+  - family: Gale
+    given: William A.
+  - family: Sampson
+    given: Geoffrey    
+  container-title: Journal of Quantitative Linguistics
+  volume: 2
+  DOI: 10.1080/09296179508590051
+  issue: 3  
+  URL: 'https://www.tandfonline.com/doi/abs/10.1080/09296179508590051'
+  publisher: Nature Publishing Group
+  page: 217–237
+  type: article-journal
+  issued:
+    year: 1995
+    month: 3    
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, fig.width=12, fig.height=8, warning=FALSE, results = 'markdown', tidy = TRUE)
+```
+
+## Executive summary
+
+The task is to build a predictive model based on the previous data modeling steps, combining the models in any way deemed appropriate to achieve greater accuracy and efficiency. We evaluate the new model using different metrics such as accuracy for the first, second, and third words. We also evaluate our model for efficiency using timing software.
+
+### Prior work
+
+We published a report <em>EDA Milestone Report</em> of prior work on [RPubs](https://rpubs.com/drbique/EDAMilestoneReport) which we review below, but do not show the same output again. 
+
+The goal is to build a simple model for the relationship between words. We completed the first steps in building a predictive text mining application, while exploring simple models and discovering more complicated modeling techniques. Summarizing, our prior work was two-fold:
+
+* Built a basic **n-gram** model, using the exploratory analysis, to predict the next word based on the previous 1, 2, or 3 words.
+* Built a model to handle unseen **n-grams** to handle cases people want to type a combination of words that do not appear in the corpora.
+
+In this context, an **n-gram model** is a type of probabilistic language model for predicting the next word given a so-called **n-gram**, which is just a phrase consisting of n words [@ngramwiki]. Since phrases are not randomly ordered, it is natural to ask: what is the next word given a phrase? Answering this question appears at first glance to be plausible if we can answer the mathematical analog: what is the conditional probability that we find such word appearing after such phrase. Considering just the fact that languages constantly change, it turns out computing the conditional probability exactly is a hard problem to solve. It might be surprising, but we can *approximate* the conditional probability that takes into account all of the words in the phrase, by just the conditional probability of the last (n-1) words.
+So the **bigram** (2-gram) or **trigram**(3-gram) "looks" one word or two of the preceding words. 
+The assumption that the probability of a word depends only on the previous (n - 1) words is called a **Markov** assumption [see @jurafsky2020, pp. 3-4]
+
+We estimate the probabilities using the so-called **maximum likelihood estimation** (**MLE**) by getting counts from a *corpus* and normalizing [see @jurafsky2020, p. 4]. Let **C(p)** denote the normalized count of the phrase p. Let P denote the *approximate* probability. We calculate the **MLE**s as follows:
+
+> **2-gram**:    $P(xy \mid x) = \displaystyle \frac{C(xy)}{C(x)}$  
+
+> **3-gram**:  $P(xyz \mid xy) = \displaystyle \frac{C(xyz)}{C(xy)}$  
+
+> **4-gram**: $P(wxyz \mid wxy) = \displaystyle \frac{C(wxyz)}{C(wxy)}$
+
+Google's simpler **Stupid Backoff** (SB) method with a constant backoff parameter of 0.4 has been used in cases when there is no history for the given prefix [see @brants2007]. There are other techniques such as adding one to all of the counts, or the so-called **Simple Good–Turing** technique [see @sampson2017; and @gale1995]
+
+In our algorithm described next, we use the idea that if we fail to find desired n-gram then we *backtrack* by ignoring information, starting with the 'oldest' words, which is our variation of *Katz's back-off model* [see @katzwiki]. The first three steps implement backtracking. The subsequent steps also implement backtracking when we ignore the third word. This approach may be useful when, for example, the third word is misspelled, an unneeded interjection or even not a word. Consider a phrase $wxy$, where $w$, $x$ and $y$ are words and, for convenience, we omit spaces. Perform the following steps:
+
+1. If $wxyz_1$ is in **4-grams**, predict $z_1$ using highest observed ranking such 4-gram; otherwise, proceed to next step.
+2. If $xyz_2$ is in **3-grams**,  predict $z_2$ using highest observed ranking such 3-gram; otherwise, proceed to next step.
+3. If $yz_3$ is in **2-grams**, predict $z_3$ using highest observed ranking such 2-gram; otherwise, proceed to next step. 
+4. If $wxz_4$ is in **3-grams**, predict $z_4$ using highest observed ranking such 3-gram; otherwise, proceed to next step. 
+5. If $xz_5$ is in **2-grams**, predict $z_5$ using highest observed ranking such 2-gram; otherwise, proceed to next step. 
+6. If $wz_6$ is in **2-grams**, predict $z_6$ using highest observed ranking such 2-gram; otherwise, predict end of phrase. 
+
+### What's new?
+
+The output! In our original attempt, we focused on finding the *best* completion. This approach was sound because it was necessary to demonstrate the methodology. Suppose, however, we return a word completion and then, the user say's: "well oh yeah, that too, but no, I don't like that word , give me another completion!" So we will return a list of possible completions whenever such info is readily available. What does this mean? We do not intend to do an exhaustive search! However, upon searching for a particular **n-gram**, if we find multiple results, we then return them approximately in ranked order. The words are ranked so that the first item in the result is 'our' best guess at completion.
+
+How can we achieve greater accuracy? Recall, we started with a rather large dataset. We partitioned that dataset as usual into three datasets for training, testing and validating. We used only the *training* dataset to obtain the various **n-grams** used in our algorithm. We now will improve the accuracy by testing  our model using the *test* dataset to discover when our algorithm fails and add new **n-grams** to avoid those failures. It is important to note that the training and test datasets do not overlap at all.
+
+How will we measure accuracy? We will use the *valid* dataset which does not overlap with either the *train* or *test* datasets. In particular, we will conduct tests for strings containing from one to three words.
+
+How can we improve efficiency? By inspection of our algorithm and experience, we are fairly confident that searching for the desired n-grams is the most computationally intensive. We therefore deem it worthwhile to sort the **n-grams**. We also explore different techniques such as binary search to find matching **n-gram**s if they exist. Further, we can modify how we store the store the **n-grams** and matches in order to use less disk space and utilize faster functions.
+
+## Load libraries
+```{r, eval=TRUE, message=FALSE}
+library("tidyverse")
+library("lubridate")
+library("lemon")
+library("devtools")
+library("formatR")
+library("knitr")
+```
+
+## Data processing 
+
+Set *working directory* if needed.
+```{r, eval=TRUE, echo=FALSE, message=FALSE}
+if(file.exists("Capstone")){
+  setwd("Capstone")
+} else if(file.exists("..\\Capstone")) {
+  setwd("..\\Capstone")
+} else {
+  dir.create("Capstone")
+  setwd("Capstone")
+}
+```
+
+Download data and unzip if needed.
+```{r, eval=FALSE, echo=FALSE}
+if(!file.exists("final")){
+  download.file("https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip", 
+                destfile = "Coursera-SwiftKey.zip")
+  if (file.exists("Coursera-SwiftKey.zip")) {
+    unzip("Coursera-SwiftKey.zip")
+    file.remove("Coursera-SwiftKey.zip")
+  }}
+```
+
+Read in text files and summarize data
+```{r,  eval=FALSE, echo=FALSE}
+countWords <- function(Text){
+  return(as.list(sapply(Text, str_count, '\\w+')))
+}
+
+countCharacters <- function(Text){
+  return(as.list(sapply(Text, nchar)))
+}
+
+text2df <- function(Text,NWords,NCharacters,Size){
+  MeanWordsPerLine = as.numeric(sapply(NWords, mean))
+  MeanCharactersPerLine = as.numeric(sapply(NCharacters, mean))
+  CharactersPerWord = as.numeric(MeanCharactersPerLine) / as.numeric(MeanWordsPerLine)
+  return(data.frame("Name" = as.factor(c("blogs","news","twitter")),
+                    "Size" = Size, 
+                    "Length" = as.numeric(sapply(Text, length)),
+                    "Words" = as.numeric(sapply(NWords, sum)),
+                    "Characters" = as.numeric(sapply(NCharacters, sum)),
+                    "MeanWords" = MeanWordsPerLine,
+                    "MaxWords" = as.numeric(sapply(NWords, max)),
+                    "MeanCharacters" = MeanCharactersPerLine, 
+                    "WordLength" = CharactersPerWord))
+}
+
+Filename = c("./final/en_US/en_US.blogs.txt","./final/en_US/en_US.news.txt","./final/en_US/en_US.twitter.txt")
+Size = as.numeric(sapply(Filename, file.size))  # original file size, treated as constant 
+
+Texts = lapply(Filename, readLines,encoding="UTF-8", skipNul=TRUE)
+
+NWords = countWords(Texts)
+
+NCharacters = countCharacters(Texts)
+
+df_summary <- text2df(Texts,NWords,NCharacters,Size)
+
+save(df_summary, file = "df_summary.rda")
+save(NCharacters, file = "NCharacters.rda")
+save(NWords, file = "NWords.rda")
+
+require(varhandle)
+varhandle::rm.all.but(keep=c("NWords","NCharacters","df_summary"))
+```
+```{r df_summary, eval=TRUE, include=TRUE, render=lemon_print}
+
+load(file = "df_summary.rda")
+
+head(df_summary)
+```
+Visually view the number of lines and words per file.
+```{r,  eval=FALSE, echo=FALSE, fig.keep = 1:3}
+par(mfrow=c(1,3))
+barplot(df_summary$Length/1000, names.arg = df_summary$Name, main="Thousands of Lines", col=c("blue","green", "purple"), beside=TRUE)
+barplot(df_summary$Words/1000000, names.arg = df_summary$Name, main="Millions of Words", col=c("blue","green", "purple"), beside=TRUE)
+barplot(df_summary$Characters/1000000, names.arg = df_summary$Name, main="Millions of Characters", col=c("blue","green", "purple"), beside=TRUE)
+```
+
+Look distribution of the length of lines.
+```{r,  eval=FALSE, echo=FALSE, fig.keep = 1:3}
+load(file = "NCharacters.rda")
+
+s <- sqrt(df_summary$Length)
+
+par(mfrow = c(3, 1))
+hist(NCharacters[[1]], main = "Frequency of Line Lengths for Blogs", xlim = c(0,800), xlab = "", ylab = "", col="blue", breaks = s[1])
+hist(NCharacters[[2]], main = "Frequency of Line Lengths for News", xlim = c(0,600), xlab = "", ylab = "Frequency", col="green", breaks = s[2])
+hist(NCharacters[[3]], main = "Frequency of Line Lengths for Twitter", xlim = c(0,180), xlab = "Length", ylab = "", col="purple", breaks = s[3])
+rm(NCharacters,s)
+```
+Look distribution of the number of words.
+```{r,  eval=FALSE, echo=FALSE, fig.keep = "first"}
+load(file = "NWords.rda")
+
+boxplot(NWords[[1]], NWords[[2]], NWords[[3]], log = "y",
+        names = df_summary$Name,
+        ylab = "log( Number of Words )", xlab = "",
+        main="Distribution of Number of Words per Line")
+rm(df_summary,NWords)
+```
+In view of the quantity of data and the distribution of line lengths, we decide to use only the twitter dataset as the other datasets do not seem suitable to answer the type of question we are considering. In particular, the news dataset is relatively small. The distribution of line lengths for the blogs dataset is too skewed towards short lines that we do not expect to build an **n-gram model** with good predictive power.
+Furthermore, it is not only intuitive but also supported by the literature that we can expect better results if we test using data from similar sources. So we reject mixing the datasets.
+```{r, eval=FALSE, echo=FALSE}
+Text <- readLines("final/en_US/en_US.twitter.txt",encoding = "UTF-8",skipNul = TRUE)
+```
+
+## Data cleaning
+
+We assume independence so that each word depends only on the last n − 1 words in accordance with a Markov model (see references at end of this document). We do not expect to predict URLs, email addresses, words containing numbers or foreign characters, profanity, or stylistic punctuation.
+
+Let's clean the data to ignore content which is not useful or desired for prediction:
+
+* remove words containing a digit
+* remove words containing @ symbol such as email addresses
+* remove tags in angled brackets <> such as HTML tags that may contain URLs
+* remove URLs 
+* remove words containing \ such as folder names
+* remove punctuation 
+* transform to lower case 
+* remove words containing letters other than a-z such as a foreign character
+* remove extra white space
+* remove profanity 
+
+Taking into account words have multiple meanings, we take a conservative view by considering a word as profane if 
+
+* it appears in what appears as a comprehensive list of such words, and
+* is not in a dictionary for the language. 
+
+For example *breast* appears in the list we have chosen but that word is in
+Webster's dictionary, and so we would not want to say it is a swear word.
+We use a couple lists in order to be more complete. 
+
+Also, we allow misspellings in our list of swear words for convenience as we do not intend to spell check. Remove words which should have been in dictionary, even though they may not be common or may be capitalized in usage.
+
+First, we define **swear_words**.
+```{r,  eval=FALSE, echo=FALSE}
+if(! file.exists("words")){
+  dir.create("words")
+}
+if(! file.exists("words/final")){
+  setwd("words")
+  download.file("http://downloads.sourceforge.net/wordlist/scowl-2016.01.19.zip", 
+                destfile = "words.zip")
+  if (file.exists("words.zip")) {
+    unzip("words.zip")
+    file.remove("words.zip")
+  }
+  setwd("../")
+}
+
+dict <- list.files(file.path('words', 'final'), full.names=TRUE)
+dict <- dict[ as.numeric(tools::file_ext(dict)) <= 60 & grepl("english-", dict, fixed = TRUE) ]
+
+words <- unlist(sapply(dict, readLines, USE.NAMES=FALSE))
+rm(dict)
+
+require(stringi)
+dfs <- read.csv(url("https://www.frontgatemedia.com/new/wp-content/uploads/2014/03/Terms-to-Block.csv"))
+swear_words <- c()
+v <- dfs[5:nrow(dfs),2]
+rm(dfs)
+
+for(i in seq_along(v)) {
+  v[i] <- stri_replace_all_fixed(v[i], ",", "")
+}
+v <- trimws(v) 
+
+v_ <- readLines("https://www.cs.cmu.edu/~biglou/resources/bad-words.txt", 
+                encoding="UTF-8", skipNul=TRUE)
+v_ <- trimws(v_[!v_ %in% v])
+
+
+both <- intersect(v_, v)
+v <- c(v, v_[! (v_ %in% both)])   
+v <- v[! (v %in% "")] %>% str_sort()
+
+rm(both,v_)
+
+for(i in seq_along(v)) {
+  word <- v[i]
+  if( ! str_detect(word,"[-.0123456789 ]")) {
+    if( !(word %in% words) ) swear_words <- c(swear_words,word)
+  }
+}
+
+rm(v,words)
+```
+
+Next, we modify **swear_words** but omit the code. 
+```{r, eval=FALSE, echo=FALSE}
+swear_words <- swear_words[!swear_words %in% c("","africa","african","allah",
+                                               "american","anilingus","arab","arabs","asian","australian",
+                                               "beastial","bicurious","canadian","catholics","chinese","clitorus",                                               "color","colored","coloured","cunilingus","dickless","ethiopian","european",
+                                               "feces","filipino","hitler","insest","israel","israeli","jesus","jew","jewish",
+                                               "junky","klan","licker","masterbate","masterbating","masterbation","molestor",
+                                               "nazi","nazism","nigerian","nigerians","palestinian","penial","pooper",
+                                               "satan","scumbag","slimeball","swallower","transexual","trisexual","trojan",
+                                               "twinkie","valium","viagra","vatican","weewee","welcher","yankee","zoophile")]
+```
+
+Next, we clean the text and form a data frame to hold frequencies of words.
+
+```{r, eval=FALSE, echo=FALSE}
+cleanLine <- function(line) {
+  line <- stri_replace_all_regex(str = line, pattern = "(<[^<>]*(<[^<>]*(<[^<>]*>[^<>]*)*>[^<>]*)*>)|(((https?|ftp)://[^\\s]*|((https?|ftp)://)?[\\w-]+(\\.[\\w-]+)+([\\w.,@?^=%&amp;:/~+#-]*[\\w@?^=%&amp;/~+#-])?))|([^[:ascii:]]*[rR][tT][^[:ascii:]]*)|([^\\s]*([0-9@\\\\])[^\\s]*)", replacement = "") %>%
+  
+  stri_replace_all_regex(pattern = "((^'+)|('+$)|(\\s'+)|('+\\s)|((?!')[[:punct:]])|[+^&*/|$<>=`~])|([^\\s]*[ñöü\u00C4\u00C5\u00cb\u00d1\u00d5\u00dc\u00e4\u00e5\u00eb\u00f1\u00f6\u00fc][^\\s]*)", replacement = " ") %>%
+  stri_replace_all_regex(pattern = "[^[:ascii:]]+", replacement = "") %>%
+  tolower() %>%
+  stri_replace_all_regex(pattern = "(?<=^| )[a-z']*([a-z])\\1{2,}[a-z']*(?=$| )", replacement = "") %>%
+stri_replace_all_regex(pattern = "(?<=^| )[a-z]?'[a-z](?=$| )", replacement = "")  %>%
+stri_replace_all_regex(pattern = "(?<=^| )[^ai](?=$| )", replacement = "") %>%
+stri_replace_all_regex(pattern = "(?<=^| )([a][^adghimnrstwxy ]|[b][^aeioy ]|[c][a-z ]|[d][^ao ]|[e][^adefhmnrstwx ]|[f][^ae ]|[g][^io ]|[h][^aeimo ]|[i][^dfnost ]|[j][^ao ]|[k][^ai ]|[l][^aio ]|[m][^aeimouy ]|[n][^aeouy ]|[o][^bdefhimnoprsuwx ]|[p][^aeio ]|[q][^i ]|[r][^e ]|[s][^hio ]|[t][^abeio ]|[u][^ghmprst ]|[v][a-z ]|[w][^eo ]|[x][^iu ]|[y][^aeou ]|[z][^a ])(?=$| )", replacement = "")
+  line <- unlist(strsplit(str_squish(line), " "))
+  line <- line[!line %in% swear_words]
+}
+
+words <- as.vector(character(0))
+freq <- as.vector(integer(0))
+last <- 0L
+c <- 0L
+first <- 0L
+low <- 0L
+current <- 0L
+high <- 0L
+isshort <- TRUE
+found <- FALSE
+w <- character(0)
+line <- as.vector(character(0))
+
+for(i in seq_along(Text)){
+  line = cleanLine(Text[i])
+  for(j in seq_along(line)) {
+    w = line[j]
+    
+    found = FALSE
+    
+    if( isshort ) {  # linear search for w
+      first = 0L      # INV: first is # of elements known to be smaller
+      current = 1L    # INV: insertion index when finished
+      if( current > last ) {
+        c = 1L
+      } else {
+        c <- stri_compare(words[current],w)
+      }
+      while( c < 0 ) { 
+        first = current
+        current = current + 1L
+        if( current > last ) {
+          c = 1L
+        } else {
+          c = stri_compare(words[current],w)
+        }          
+      }
+      found = (c == 0)
+      isshort = (last < 9L)
+    } else {
+      low = 1L
+      high = last
+      
+      c = stri_compare(words[low],w)
+      if (c < 0) {
+        is_to_right = TRUE
+        
+        c = stri_compare(w,words[high])
+        if(c < 0) {
+          is_to_left = TRUE
+        } else if(c == 0) {
+          current = high
+          found = TRUE
+          is_to_right = FALSE
+        }  else { 
+          first = last
+          is_to_right = FALSE
+        }
+        
+      } else { 
+        if (c == 0) {
+          current = low
+          found = TRUE
+          is_to_right = FALSE
+        } else { 
+          first = 0L
+          is_to_right = FALSE
+        }
+      }
+      
+      while ( is_to_right && is_to_left ) {
+        
+        current = (low + high) %/% 2L
+        if(current == low) {
+          first = low
+          current = high
+          break
+        }
+        
+        c = stri_compare(words[current],w)
+        
+        if (c < 0) {
+          low = current
+        } else if (c > 0) {
+          high = current
+        } else {
+          found = TRUE
+          is_to_right = FALSE
+        }
+      }
+    }
+    
+    if( found ) {
+      freq[current] = freq[current] + 1L
+    } else { # add word with frequency
+      if( first == 0 ) {
+        words = c( c(w), words )
+        freq = c( c(1), freq )
+      } else if ( first == last ) {
+        words = c( words, c(w) )
+        freq = c( freq, c(1) )
+      } else {
+        words = c( words[1:first], c(w), words[current:last] )
+        freq = c( freq[1:first], c(1), freq[current:last] )
+      }
+      last = last + 1L
+    }
+  }
+  Text[i] <- paste(line, collapse = " ")
+}
+
+writeLines(Text, con = "Cleaned Text.txt")
+
+df <- data.frame(word=words,freq=freq)
+write.csv(df,'WordFreq.csv', row.names = FALSE)
+
+varhandle::rm.all.but(keep = c("Text","words","freq"))
+```
+Let's examine the frequencies of words.
+```{r,  eval=FALSE, echo=FALSE, message=FALSE}
+  df <- read.csv(file = 'WordFreq.csv')
+
+  require("Hmisc")
+  Hmisc::describe(df$freq)
+  
+  df <- df[order(df$freq, decreasing = TRUE),]
+  print(df[1:20,], row.names = FALSE)
+```
+
+```{r,  eval=FALSE, echo=FALSE, message=FALSE,  fig.keep="first"}
+  f <- df[50:1500,]
+ 
+  ggplot(f, aes(x=1:nrow(f), y=freq)) + 
+        geom_bar(stat = 'identity', width = 0.5) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+    labs(title ="Frequency of Less Common Words by Rank",
+        x = "Index of Words", y = "count")
+  
+  tail(f,20)
+  
+  rm(df,f)
+```
+## Partitioning the datasets
+We partition our data into the usual sets for training, testing and validation.  
+```{r, eval=FALSE, echo=TRUE}
+
+set.seed(10000169)
+
+Text <- readLines("Cleaned Text.txt")
+
+Length = length(Text)
+
+sizeTrain    <- floor(Length * 0.6)
+sizeTest     <- floor((Length - sizeTrain)/2)
+sizeValidate <- sizeTest
+
+indicesTrain <- sort(sample(seq_len(Length), size=sizeTrain))
+indicesTest <- setdiff(seq_len(Length), indicesTrain)
+indicesValidate <- sort(sample(indicesTest, size=sizeValidate))
+indicesTest     <- setdiff(indicesTest, indicesValidate)
+
+str(indicesTrain)
+str(indicesTest)
+str(indicesValidate)
+
+writeLines(Text[indicesTrain], con = "Train.txt")
+writeLines(Text[indicesTest], con = "Test.txt")
+writeLines(Text[indicesValidate], con = "Validate.txt")
+
+rm(indicesTrain,indicesTest,indicesValidate,Text)
+```
+## Forming **n-grams**
+We  utilize the notion of a *corpus* for text mining in **R** 
+and library *quanteda* to implement our algorithm [see @quantedarblog] 
+
+```{r train_2 train_3 train_4 test valid, eval=FALSE, echo=FALSE}
+require("quanteda")
+
+get_tokens <- function(filename) {
+  tokens(x = corpus(readLines(paste0(filename,'.txt'))), what = 'word', 
+         remove_punct = TRUE, remove_separators = TRUE, remove_symbols = TRUE)
+}
+
+ngram <- function(c, n) {
+    d <- textstat_frequency(dfm(
+    tokens_ngrams(c,n = n,concatenator = ' '), tolower = FALSE))
+    d <- data.frame(ngram=d$feature, count=d$frequency)
+}
+
+valid <- ngram(get_tokens("Validate"),4L)
+save(valid, file = "validate_4grams.rda")
+
+test <- ngram(get_tokens("Test"),4L)
+save(test, file = "test_4grams.rda")
+
+train_tokens <- get_tokens("Train")
+
+train_2 <- ngram(train_tokens,2L)
+save(train_2,file = "train_2.rda")
+
+train_3 <- ngram(train_tokens,3L)
+save(train_3,file = "train_3.rda")
+
+train_4 <- ngram(train_tokens,4L)
+save(train_4,file = "train_4.rda")
+
+rm(train_tokens)
+```
+
+## Implement algorithm
+```{r,  eval=FALSE, echo=FALSE, message=FALSE,fig.keep="first"}
+load(file = "test_4grams.rda") 
+load(file = "train_2.rda")
+load(file = "train_3.rda")
+load(file = "train_4.rda")
+
+require("ggplot2")
+ggplot(train_4[1:50, ], aes(x = reorder(ngram, count), y = count)) +
+    geom_point() +
+    coord_flip() +
+    labs(x = NULL, y = "Frequency")
+
+require("stringi")
+
+predict <- function(p) {
+  s <- unlist(strsplit(p, ' '))
+  t <- length(s) 
+  if(t >= 3) {
+    if(t >= 4) s <- tail(s,3)
+    t <- train_4[str_starts(train_4$ngram, paste0(s[1]," ",s[2]," ",s[3])),]
+    if(nrow(t) == 0) {
+      t <- train_3[str_starts(train_3$ngram, paste0(s[2],' ',s[3])),]
+      if(nrow(t) == 0) {
+        t <- train_2[str_starts(train_2$ngram, s[3]),]
+        if(nrow(t) == 0) {
+          t <- train_3[str_starts(train_3$ngram, paste0(s[1],' ',s[2])),]
+          if(nrow(t) == 0) {
+            t <- NA
+          } else {
+            t <- unlist(strsplit(t[1,1],' '))[3]
+          }
+          if(is.na(t) || (stri_cmp_eq(t,s[3]))) {
+            t <- train_2[str_starts(train_2$ngram, s[2]),]
+            if(nrow(t) == 0) {
+              t <- NA
+            } else {
+              t <- unlist(strsplit(t[1,1],' '))[2]
+            }
+            if(is.na(t) || (stri_cmp_eq(t,s[3]))) {
+              t <- train_2[str_starts(train_2$ngram, s[1]),]
+              if(nrow(t) == 0) {
+                t <- NA
+              } else {
+                t <- unlist(strsplit(t[1,1],' '))[2]
+              }
+              if(is.na(t) || (stri_cmp_eq(t,s[3]))) {
+                t <- NA
+              } 
+            } 
+          }
+        } else {
+          t <- unlist(strsplit(t[1,1],' '))[2] 
+        }
+      } else {
+        t <- unlist(strsplit(t[1,1],' '))[3]
+      }
+    } else {
+      t <- unlist(strsplit(t[1,1],' '))[4]
+    }
+  } else if (t == 2) {
+    t <- train_3[str_starts(train_3$ngram, p),]
+    if(nrow(t) == 0) {
+      t <- train_2[str_starts(train_2$ngram, s[2]),]
+      if(nrow(t) == 0) {
+        t <- train_2[str_starts(train_2$ngram, s[1]),]
+        if(nrow(t) == 0) {
+          t <- NA
+        } else {
+          t <- unlist(strsplit(t[1,1],' '))[2]
+          if( stri_cmp_eq(t,s[2]) ) {
+            t <- NA
+          } 
+        }
+      } else {
+        t <- unlist(strsplit(t[1,1],' '))[2] 
+      }
+    } else {
+      t <- unlist(strsplit(t[1,1],' '))[3]
+    }
+  } else if (t == 1) {
+    t <- train_2[str_starts(train_2$ngram, p),]
+    if(nrow(t) == 0) {
+      t <- NA
+    } else {
+      t <- unlist(strsplit(t[1,1],' '))[2]
+    }
+  } else {
+    t = NA
+  }  
+  t}
+```
+
+Recall, in our original implementation, which we omit here, we searched through our
+**n-grams** to find a suitable match. Before making further improvements, it is beneficial
+to consider more carefully both the representation of the model and the function used to find matches in order to reduce the memory size and improve performance.
+
+We intend to sort the **n-grams** and use binary search. But, in this first optimization, we 
+are going to ignore sorting, so we can more easily make comparisons. Consider can we find a representation, which not only requires less memory, but also permits faster performance by careful application of functions used. 
+
+We look just **2-grams** and suppose we want to find all of the indices for which there is a match with a chosen word among the prefixes in the **2-grams**. In our original dataset,
+we must apply a function that matches a prefix exactly. If, we stored the **n-gram** in two parts, namely the prefix and final word, then we could possibly apply a faster function to match the prefix. We find that our original representation is 160% larger than a new representation. We also find that the operator **%fin%** is relatively fast to find desired index set.
+```{r}
+# transform 2-grams
+mutate2 <- function(df) {
+  n <- nrow(df)
+  s <- sapply(df$ngram, function(x) unlist(strsplit(x, ' ')))
+  data.frame(prefix=s[1,],word=s[2,],count=df$count, row.names = NULL)
+}
+
+predict1 <- function(w) {
+  p <- paste0(w," ")
+  t <- train_2[str_starts(train_2$ngram, p),]
+}
+
+# str_detect
+require("stringr") 
+predict2 <- function(w) {
+  p <- paste0("^",w," ")
+  t <- train_2[str_detect(train_2$ngram, p),]
+}
+
+predict3 <- function(w) {
+  t  <- train2[sapply(train2$prefix,function(x) stri_cmp_eq(x,w)),]
+}
+
+predict4 <- function(w) {
+  t  <- train2[sapply(train2$prefix,function(x) x == w),]
+}
+
+predict5 <- function(w) {
+  t  <- train2[train2$prefix %in% w,]
+}
+
+require(data.table)
+predict6 <- function(w) {
+  t  <- train2[train2$prefix %chin% w,]
+}
+
+require("fastmatch")
+predict7 <- function(w) {
+  t  <- train2[train2$prefix %fin% w,]
+}
+
+
+load(file = "train_2.rda")
+train2 <- mutate2(train_2)
+
+save(train2, file = "train2.rda")
+
+s1 <- object.size(train_2)
+s2 <- object.size(train2)
+
+if (s1 < s2) {
+  print(paste0("Original representation is ", (1 - s1/s2)*100,"% smaller."))
+} else {
+  print(paste0("Original representation is ", (s1/s2 - 1)*100,"% larger."))
+}
+
+w <- train2$prefix[nrow(train2)]
+
+t <- numeric(7)
+
+t[1] <- system.time(m1 <- predict1(w))
+t[2] <- system.time(m2 <- predict2(w))
+t[3] <- system.time(m3 <- predict3(w))
+t[4] <- system.time(m4 <- predict4(w))
+t[5] <- system.time(m5 <- predict5(w))
+t[6] <- system.time(m6 <- predict6(w))
+t[7] <- system.time(m7 <- predict7(w))
+
+str(c(m1,m2,m3,m4,m5,m6,m7))
+all.equal(m1,m2)
+all.equal(m3,m4)
+all.equal(m3,m5)
+all.equal(m3,m6)
+all.equal(m3,m7)
+
+q <- character(length(m7$prefix))
+for(i in 1:length(m7$prefix)) q[i] = paste0(m7$prefix[i]," ",m7$word[i])
+all.equal(m1$ngram,q)
+
+print(t)
+
+summary(t)
+plot(t)
+```
+Next, we consider another representation to improve performance, but which
+slightly increases memory/space requirements. We find the new representation requires about 133% more space. We will find out if the increase in size is an acceptable trade-off.
+```{r}
+train2match <- sort(unique(train2$prefix))
+
+required(future.apply)
+plan(multisession) ## Run in parallel on local computer
+
+train2word <- future_lapply(train2match, 
+      function(x) train2[train2$prefix %fin% x,]$word)
+
+train2_length <- length(train2match)
+
+save(train2match,train2word,train2_length, file = "train-2.rda")
+
+s3 <- object.size(train2match) + object.size(train2word)
+
+if (s3 < s2) {
+  print(paste0("New representation is ", round((1 - s3/s2)*100,2),"% of the intermediate representation."))
+} else {
+  print(paste0("New representation is ", round((s3/s2 - 1)*100,2),"% larger than intermediate representation."))
+}
+
+require(varhandle) 
+varhandle::rm.all.but(keep=c("train2match","train2word"))
+```
+
+Next, consider What search function is optimal for our representations. In particular,
+we write a custom binary search, and also compare **fastmatch** on both representations.
+We find **fastmatch** is up to about 1325% faster on the new representation. It is likely the magnitude of the performance improvement is highly dependent on the number of searches conducted. We will trade a 133% increase in memory space requirements for such performance improvement. Notwithstanding, The newest representation for 2-grams takes only 233 MB of memory. Furthermore, remember we transitioned through a couple different representations, and the new representation is about 10.5% smaller compared to original one. Additionally, the new representation requires about 60% of the original disk size, and about 20% of the disk size for the intermediate representation. In summary, we have overall reduced the disk space requirements by about 60% and found a fast function to perform searches. 
+```{r}
+predict8 <- function(ws) {
+  for(w in ws) {
+    indx <- fmatch(w,train2match)
+    if( is.na(indx) ) {
+      t <- NA
+    } else {
+      t <- train2word[indx]
+    }
+  }
+  t
+}
+
+predict9 <- function(ws) {
+  for(w in ws) {
+    low = 1L
+    high = train2_length
+    found = FALSE
+    c = stri_compare(train2match[low],w)
+    if (c < 0) {
+      is_to_right = TRUE
+      c = stri_compare(w,train2match[high])
+      if(c < 0) {
+        is_to_left = TRUE
+      } else if(c == 0) {
+        current = high
+        found = TRUE
+        is_to_right = FALSE
+      }  else { 
+        is_to_right = FALSE
+      }
+    } else { 
+      if (c == 0) {
+        current = low
+        found = TRUE
+        is_to_right = FALSE
+      } else { 
+        is_to_right = FALSE
+      }
+    }
+    while ( is_to_right && is_to_left ) {
+      current = (low + high) %/% 2L
+      if(current == low) {
+        break
+      }
+      c = stri_compare(train2match[current],w)
+      if (c < 0) {
+        low = current
+      } else if (c > 0) {
+        high = current
+      } else {
+        found = TRUE
+        is_to_right = FALSE
+      }
+    }
+    if( found ) {
+      t <- train2word[current]
+    } else {
+      t <- NA 
+    }
+  }
+  t
+}
+
+require("fastmatch")
+predict10 <- function(ws) {
+  for(w in ws) {
+    t <- train2[train2$prefix %fin% w,]
+    if(nrow(t) == 0) {
+      t <- NA
+    } else {
+      t <- unlist(strsplit(t[1,1],' '))[2]
+    }
+  }
+}
+
+set.seed(10011101)
+
+words <- train2match[sample(seq_len(length(train2match)), size=10000)]
+words <- c("theoreticallythisisnotlol",words)
+
+t <- numeric(3)
+
+t[1] <- system.time(m1 <- predict8(words))
+t[2] <- system.time(m2 <- predict9(words))
+t[3] <- system.time(m3 <- predict9(words))
+
+str(c(m1,m2,m3))
+
+all.equal(m1,m2)
+all.equal(m1,m3)
+
+print(t)
+summary(t)
+plot(t)
+print(paste0("The percentage increase in performance is approximately ",t[3]/t[1]*100,"%."))
+
+load("train_2.rda")
+s1 <- object.size(train_2)
+print(paste0("The new representation is ", (1 - s3/s1)*100,"% smaller than original one."))
+
+formatsize <- function(bytes, decimals = 0) {
+    if (bytes <= 1) {
+      if(bytes == 0) return("0 bytes")
+      return("1 byte")
+    }
+    i <- floor(log(bytes) / log(1024))
+
+    paste0(round(bytes / (1024^i), digits = if (decimals < 0) 0 else decimals),' ',
+      c('bytes','KB','MB','GB','TB','PB','EB','ZB','YB')[i+1])
+}
+
+fs1 <- file.size("train_2.rda")
+fs2 <- file.size("train2.rda")
+fs3 <- file.size("train-2.rda")
+
+if( fs3 < fs1 && fs3 < fs2) print(paste0("Newest representation takes ",formatsize(fs3)," to store on disk\nand is ", round(fs3/fs1*100,2),"% of the original disk size, and ", round(fs3/fs2*100,2),"% of the disk size for previous representation."))
+
+print(paste0("The newest representation for 2-grams takes ",formatsize(s3)))
+
+rm("train_2","train2","t","words")
+```
+We next convert the remaining representations of stored **n-grams**.
+```{r}
+require(future.apply)
+plan(multisession) ## Run in parallel on local computer
+
+require(stringr)
+require(data.table)
+mutate3 <- function(df) {
+  s <- future_lapply(df$ngram, function(x) strsplit(x, '( )(?=[^ ]+$)', perl=TRUE))
+  s <- split(unlist(s),1:2)
+  data.frame(prefix=s[1],word=s[2],count=df$count, row.names = NULL)
+}
+
+load("train_3.rda")
+train3 <- mutate3(train_3)
+colnames(train3) <- c("prefix","word","count")
+save(train3, file = "train3.rda")
+
+train3match <- sort(unique(train3$prefix))
+
+train3_length <- length(train3match)
+
+require(fastmatch)
+train3word <- future_lapply(train3match, 
+      function(x) train3[train3$prefix %fin% x,]$word)
+
+save(train3match,train3word,train3_length, file = "train-3.rda")
+
+```
+
+## Conclusion
+We have overall reduced the disk space requirements by about 60% and found a fast function to perform searches. 
+Our initial model yields nearly ??% accuracy based on testing using the *valid* portion of the cleaned dataset (see Test.txt).
+
+## References
